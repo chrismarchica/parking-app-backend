@@ -195,6 +195,32 @@ def get_meter_rate():
         }), 500
 
 
+@parking_bp.route('/data-status')
+def get_data_status():
+    """
+    Get comprehensive data status for all data sources.
+    
+    Returns:
+    - JSON object with statistics for parking signs, meter rates, and violations
+    """
+    try:
+        # Log the API request
+        log_api_request('/data-status', {})
+        
+        # Get data status from data loader
+        data_loader = current_app.data_loader
+        status = data_loader.get_data_status()
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        logging.error(f"Error in get_data_status: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'Unable to fetch data status'
+        }), 500
+
+
 
 
 
