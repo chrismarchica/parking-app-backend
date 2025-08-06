@@ -221,6 +221,90 @@ def get_data_status():
         }), 500
 
 
+@parking_bp.route('/load-sample-data', methods=['POST'])
+def load_sample_data():
+    """
+    Load sample violation data for demonstration.
+    
+    Request Body:
+    - sample_size (int, optional): Number of sample records to generate (default: 1000)
+    
+    Returns:
+    - JSON object with success message and sample size
+    """
+    try:
+        # Log the API request
+        log_api_request('/load-sample-data', {})
+        
+        # Get sample size from request
+        data = request.get_json() or {}
+        sample_size = data.get('sample_size', 1000)
+        
+        # Validate sample size
+        if not isinstance(sample_size, int) or sample_size < 100 or sample_size > 10000:
+            return jsonify({
+                'error': 'Invalid sample_size',
+                'message': 'sample_size must be an integer between 100 and 10000'
+            }), 400
+        
+        # Load sample data
+        data_loader = current_app.data_loader
+        data_loader.load_sample_violations(sample_size)
+        
+        return jsonify({
+            'message': f'Successfully loaded {sample_size} sample violation records',
+            'sample_size': sample_size
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in load_sample_data: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'Unable to load sample data'
+        }), 500
+
+
+@parking_bp.route('/reload-parking-signs', methods=['POST'])
+def reload_parking_signs():
+    """
+    Reload parking signs data (or create sample data if loading fails).
+    
+    Returns:
+    - JSON object with success message and sign count
+    """
+    try:
+        # Log the API request
+        log_api_request('/reload-parking-signs', {})
+        
+        # Reload parking signs data
+        data_loader = current_app.data_loader
+        success = data_loader.load_parking_signs()
+        
+        # Debug information
+        df_status = "None" if data_loader.parking_signs_df is None else f"DataFrame with {len(data_loader.parking_signs_df)} rows"
+        
+        # If no data after loading, force sample data creation
+        if data_loader.parking_signs_df is None or data_loader.parking_signs_df.empty:
+            logging.info("Forcing sample parking signs creation...")
+            data_loader._create_sample_parking_signs()
+        
+        signs_count = len(data_loader.parking_signs_df) if data_loader.parking_signs_df is not None else 0
+        
+        return jsonify({
+            'message': f'Parking signs reloaded. Count: {signs_count}',
+            'success': success,
+            'signs_count': signs_count,
+            'debug_info': df_status
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in reload_parking_signs: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'Unable to reload parking signs'
+        }), 500
+
+
 
 
 
