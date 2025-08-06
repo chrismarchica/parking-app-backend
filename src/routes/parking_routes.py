@@ -305,6 +305,78 @@ def reload_parking_signs():
         }), 500
 
 
+@parking_bp.route('/debug/test-nyc-api', methods=['GET'])
+def test_nyc_api():
+    """
+    Test the NYC Open Data API endpoints directly.
+    
+    Returns:
+    - JSON object with API test results
+    """
+    try:
+        import requests
+        from src.config import Config
+        
+        results = {}
+        
+        # Test parking signs API
+        try:
+            url = f"{Config.PARKING_SIGNS_URL}?$limit=10"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+            }
+            response = requests.get(url, timeout=30, headers=headers)
+            
+            results['parking_signs'] = {
+                'url': url,
+                'status_code': response.status_code,
+                'headers': dict(response.headers),
+                'data_length': len(response.json()) if response.status_code == 200 else 0,
+                'raw_response_length': len(response.content),
+                'error': None
+            }
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    results['parking_signs']['sample_record'] = data[0] if len(data) > 0 else "No records"
+                    results['parking_signs']['columns'] = list(data[0].keys()) if len(data) > 0 else []
+            
+        except Exception as e:
+            results['parking_signs'] = {
+                'error': str(e),
+                'url': f"{Config.PARKING_SIGNS_URL}?$limit=10"
+            }
+        
+        # Test meter zones API
+        try:
+            url = f"{Config.METER_ZONES_URL}?$limit=10"
+            response = requests.get(url, timeout=30)
+            
+            results['meter_zones'] = {
+                'url': url,
+                'status_code': response.status_code,
+                'data_length': len(response.json()) if response.status_code == 200 else 0,
+                'error': None
+            }
+            
+        except Exception as e:
+            results['meter_zones'] = {
+                'error': str(e),
+                'url': f"{Config.METER_ZONES_URL}?$limit=10"
+            }
+        
+        return jsonify(results)
+        
+    except Exception as e:
+        logging.error(f"Error in test_nyc_api: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': str(e)
+        }), 500
+
+
 
 
 
