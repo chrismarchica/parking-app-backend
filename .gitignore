@@ -199,7 +199,7 @@ secrets.json
 config.json
 
 # Data files
-data/
+
 datasets/
 *.csv
 *.json
