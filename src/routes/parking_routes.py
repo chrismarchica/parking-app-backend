@@ -221,6 +221,65 @@ def get_data_status():
         }), 500
 
 
+@parking_bp.route('/load-real-violations', methods=['POST'])
+def load_real_violations():
+    """
+    Load real violation data from NYC Open Data.
+    
+    Request Body:
+    - limit (int, optional): Number of records to load (default: 10000, max: 50000)
+    
+    Returns:
+    - JSON object with success message and record count
+    """
+    try:
+        # Log the API request
+        log_api_request('/load-real-violations', {})
+        
+        # Get limit from request
+        data = request.get_json() or {}
+        limit = data.get('limit', 10000)
+        
+        # Validate limit
+        if not isinstance(limit, int) or limit < 100 or limit > 50000:
+            return jsonify({
+                'error': 'Invalid limit',
+                'message': 'limit must be an integer between 100 and 50000'
+            }), 400
+        
+        # Load real violations data
+        data_loader = current_app.data_loader
+        success = data_loader.load_real_violations(limit)
+        
+        if not success:
+            return jsonify({
+                'error': 'Failed to load violations data',
+                'message': 'Unable to fetch or process violations from NYC Open Data'
+            }), 500
+        
+        # Get actual count from database
+        import sqlite3
+        conn = sqlite3.connect(data_loader.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM violations")
+        actual_count = cursor.fetchone()[0]
+        conn.close()
+        
+        return jsonify({
+            'message': f'Successfully loaded real violation data',
+            'requested_limit': limit,
+            'total_violations_in_db': actual_count,
+            'data_source': 'NYC Open Data'
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in load_real_violations: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': f'Unable to load real violations data: {str(e)}'
+        }), 500
+
+
 @parking_bp.route('/load-sample-data', methods=['POST'])
 def load_sample_data():
     """

@@ -402,6 +402,209 @@ class DataLoader:
                 'error': str(e)
             }
     
+    def load_real_violations(self, limit: int = None) -> bool:
+        """Load real violation data from NYC Open Data with geocoding."""
+        try:
+            if limit is None:
+                limit = Config.MAX_VIOLATIONS_TO_LOAD
+            
+            logging.info(f"Fetching real violations data from NYC Open Data (limit: {limit})...")
+            
+            # Fetch violations data
+            url = f"{Config.VIOLATIONS_URL}?$limit={limit}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+            }
+            
+            response = requests.get(url, timeout=60, headers=headers)
+            response.raise_for_status()
+            
+            violations_data = response.json()
+            logging.info(f"Received {len(violations_data)} violation records")
+            
+            if not violations_data:
+                logging.warning("No violations data received")
+                return False
+            
+            # Process violations in batches for geocoding
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get violation code descriptions
+            violation_codes = self._get_violation_code_descriptions()
+            
+            processed_count = 0
+            geocoded_count = 0
+            
+            # Process in batches to manage memory and API rate limits
+            batch_size = Config.GEOCODING_BATCH_SIZE
+            
+            for i in range(0, len(violations_data), batch_size):
+                batch = violations_data[i:i + batch_size]
+                logging.info(f"Processing batch {i//batch_size + 1}/{(len(violations_data)-1)//batch_size + 1}")
+                
+                for violation in batch:
+                    try:
+                        # Build address from violation data
+                        address_parts = []
+                        
+                        if violation.get('violation_location'):
+                            address_parts.append(violation['violation_location'])
+                        
+                        if violation.get('street_name'):
+                            address_parts.append(violation['street_name'])
+                        
+                        if violation.get('intersecting_street'):
+                            address_parts.append(f"near {violation['intersecting_street']}")
+                        
+                        # Add NYC to help geocoding
+                        address_parts.append("New York, NY")
+                        
+                        address = " ".join(address_parts)
+                        
+                        # Geocode the address
+                        lat, lon = self._geocode_address(address)
+                        
+                        if lat and lon:
+                            geocoded_count += 1
+                        
+                        # Get violation description
+                        violation_code = violation.get('violation_code', '')
+                        violation_description = violation_codes.get(violation_code, f"Violation Code {violation_code}")
+                        
+                        # Calculate fine amount (simplified mapping)
+                        fine_amount = self._get_fine_amount(violation_code)
+                        
+                        # Get borough from county code
+                        borough = self._get_borough_from_county(violation.get('violation_county', ''))
+                        
+                        # Insert into database
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO violations 
+                            (summons_number, plate_id, registration_state, plate_type, 
+                             issue_date, violation_code, vehicle_body_type, vehicle_make,
+                             issuing_agency, street_name, intersecting_street, 
+                             violation_location, violation_description, violation_county,
+                             borough, fine_amount, latitude, longitude)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            violation.get('summons_number'),
+                            violation.get('plate_id'),
+                            violation.get('registration_state'),
+                            violation.get('plate_type'),
+                            violation.get('issue_date'),
+                            violation.get('violation_code'),
+                            violation.get('vehicle_body_type'),
+                            violation.get('vehicle_make'),
+                            violation.get('issuing_agency'),
+                            violation.get('street_name'),
+                            violation.get('intersecting_street'),
+                            violation.get('violation_location'),
+                            violation_description,
+                            violation.get('violation_county'),
+                            borough,
+                            fine_amount,
+                            lat,
+                            lon
+                        ))
+                        
+                        processed_count += 1
+                        
+                    except Exception as e:
+                        logging.warning(f"Error processing violation {violation.get('summons_number', 'unknown')}: {e}")
+                        continue
+                
+                # Commit batch
+                conn.commit()
+                
+                # Add small delay to be respectful to geocoding API
+                import time
+                time.sleep(0.1)
+            
+            conn.close()
+            
+            logging.info(f"Successfully loaded {processed_count} real violations")
+            logging.info(f"Geocoded {geocoded_count} addresses ({geocoded_count/processed_count*100:.1f}%)")
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error loading real violations: {e}")
+            import traceback
+            logging.error(f"Full traceback: {traceback.format_exc()}")
+            return False
+    
+    def _geocode_address(self, address: str) -> Tuple[Optional[float], Optional[float]]:
+        """Geocode an address using NYC Planning Labs Geosearch API."""
+        try:
+            params = {
+                'text': address,
+                'size': 1
+            }
+            
+            response = requests.get(Config.GEOCODING_API_URL, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('features') and len(data['features']) > 0:
+                    coordinates = data['features'][0]['geometry']['coordinates']
+                    # API returns [longitude, latitude]
+                    return coordinates[1], coordinates[0]  # Return lat, lon
+            
+            return None, None
+            
+        except Exception as e:
+            logging.debug(f"Geocoding failed for address '{address}': {e}")
+            return None, None
+    
+    def _get_violation_code_descriptions(self) -> Dict[str, str]:
+        """Get violation code to description mapping."""
+        # Common NYC parking violation codes
+        return {
+            '14': 'NO STANDING-DAY/TIME LIMITS',
+            '16': 'NO STANDING-BUS STOP',
+            '17': 'NO PARKING-DAY/TIME LIMITS',
+            '19': 'NO PARKING-BUS STOP',
+            '20': 'NO PARKING-DAY/TIME LIMITS',
+            '21': 'NO PARKING-STREET CLEANING',
+            '34': 'EXPIRED MUNI METER',
+            '35': 'FAIL TO DSPLY MUNI METER RECPT',
+            '37': 'EXPIRED METER',
+            '38': 'OVERTIME STANDING',
+            '40': 'FIRE HYDRANT',
+            '46': 'DOUBLE PARKING',
+            '47': 'DOUBLE PARKING',
+            '50': 'PHTO SCHOOL ZN SPEED VIOLATION',
+            '67': 'BLOCKING PEDESTRIAN RAMP',
+            '69': 'FAILURE TO STOP AT RED LIGHT',
+            '71': 'NO PARKING WHERE PROHIBITED',
+            '78': 'NO PARKING-NIGHTTIME',
+        }
+    
+    def _get_fine_amount(self, violation_code: str) -> float:
+        """Get fine amount for violation code."""
+        # Simplified fine mapping
+        fine_mapping = {
+            '14': 115, '16': 115, '17': 65, '19': 115, '20': 65,
+            '21': 65, '34': 35, '35': 35, '37': 25, '38': 35,
+            '40': 115, '46': 115, '47': 115, '50': 50, '67': 165,
+            '69': 50, '71': 65, '78': 35
+        }
+        return fine_mapping.get(violation_code, 50)  # Default $50
+    
+    def _get_borough_from_county(self, county_code: str) -> str:
+        """Convert county code to borough name."""
+        county_mapping = {
+            'NY': 'MANHATTAN',
+            'BX': 'BRONX', 
+            'BK': 'BROOKLYN',
+            'QN': 'QUEENS',
+            'ST': 'STATEN ISLAND'
+        }
+        return county_mapping.get(county_code, 'UNKNOWN')
+
     def load_sample_violations(self, sample_size: int = 1000):
         """Load sample violation data for demonstration."""
         try:
