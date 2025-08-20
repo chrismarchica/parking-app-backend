@@ -793,6 +793,68 @@ class DataLoader:
             logging.error(f"Error in approximate coordinate conversion: {e}")
             return df
     
+    def find_nearby_violations(
+        self, 
+        lat: float, 
+        lon: float, 
+        radius_meters: int = 1000,
+        start_date: str = None,
+        end_date: str = None,
+        limit: int = 100
+    ) -> List[Dict]:
+        """Find violations within radius of given coordinates and date range."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Build query with geographic and date filters
+            query = """
+                SELECT *,
+                       (6371000 * acos(
+                           cos(radians(?)) * cos(radians(latitude)) * 
+                           cos(radians(longitude) - radians(?)) + 
+                           sin(radians(?)) * sin(radians(latitude))
+                       )) as distance_meters
+                FROM violations 
+                WHERE latitude IS NOT NULL 
+                  AND longitude IS NOT NULL
+            """
+            params = [lat, lon, lat]
+            
+            # Add date filters if provided
+            if start_date:
+                query += " AND date(issue_date) >= date(?)"
+                params.append(start_date)
+            
+            if end_date:
+                query += " AND date(issue_date) <= date(?)"
+                params.append(end_date)
+            
+            # Add distance filter and ordering
+            query += """
+                HAVING distance_meters <= ?
+                ORDER BY distance_meters ASC
+                LIMIT ?
+            """
+            params.extend([radius_meters, limit])
+            
+            cursor.execute(query, params)
+            columns = [description[0] for description in cursor.description]
+            
+            violations = []
+            for row in cursor.fetchall():
+                violation = dict(zip(columns, row))
+                # Round distance for readability
+                violation['distance_meters'] = round(violation['distance_meters'], 1)
+                violations.append(violation)
+            
+            conn.close()
+            return violations
+            
+        except Exception as e:
+            logging.error(f"Error finding nearby violations: {e}")
+            return []
+
     def get_data_status(self) -> Dict:
         """Get comprehensive data status for all data sources."""
         try:

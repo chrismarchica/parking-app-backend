@@ -364,6 +364,112 @@ def reload_parking_signs():
         }), 500
 
 
+@parking_bp.route('/violations')
+def get_violations():
+    """
+    Get parking violations within a radius of specified coordinates and date range.
+    
+    Query Parameters:
+    - lat (float, required): Latitude
+    - lon (float, required): Longitude  
+    - radius (int, optional): Search radius in meters (default: 1000)
+    - start_date (string, optional): Start date filter (YYYY-MM-DD format)
+    - end_date (string, optional): End date filter (YYYY-MM-DD format)
+    - limit (int, optional): Maximum number of results (default: 100, max: 1000)
+    
+    Returns:
+    - JSON array of parking violations with details and distances
+    """
+    try:
+        # Get query parameters
+        lat = request.args.get('lat', type=float)
+        lon = request.args.get('lon', type=float)
+        radius = request.args.get('radius', type=int, default=1000)
+        start_date = request.args.get('start_date', type=str)
+        end_date = request.args.get('end_date', type=str)
+        limit = request.args.get('limit', type=int, default=100)
+        
+        # Validate required parameters
+        if lat is None or lon is None:
+            return jsonify({
+                'error': 'Missing required parameters: lat and lon',
+                'example': '/api/violations?lat=40.7589&lon=-73.9851&radius=1000'
+            }), 400
+        
+        # Validate coordinates using utility function
+        is_valid, error_msg = validate_nyc_coordinates(lat, lon)
+        if not is_valid:
+            return jsonify({'error': error_msg}), 400
+        
+        # Validate radius
+        if not (10 <= radius <= 5000):
+            return jsonify({
+                'error': 'Radius must be between 10 and 5000 meters'
+            }), 400
+        
+        # Validate limit
+        if not (1 <= limit <= 1000):
+            return jsonify({
+                'error': 'Limit must be between 1 and 1000'
+            }), 400
+        
+        # Validate date formats if provided
+        if start_date:
+            try:
+                from datetime import datetime
+                datetime.strptime(start_date, '%Y-%m-%d')
+            except ValueError:
+                return jsonify({
+                    'error': 'Invalid start_date format. Use YYYY-MM-DD'
+                }), 400
+        
+        if end_date:
+            try:
+                from datetime import datetime
+                datetime.strptime(end_date, '%Y-%m-%d')
+            except ValueError:
+                return jsonify({
+                    'error': 'Invalid end_date format. Use YYYY-MM-DD'
+                }), 400
+        
+        # Log the API request
+        log_api_request('/violations', {
+            'lat': lat, 'lon': lon, 'radius': radius,
+            'start_date': start_date, 'end_date': end_date, 'limit': limit
+        })
+        
+        # Get data from data loader
+        data_loader = current_app.data_loader
+        nearby_violations = data_loader.find_nearby_violations(
+            lat, lon, radius, start_date, end_date, limit
+        )
+        
+        # Format response using utility function
+        response = format_coordinate_response(lat, lon, radius)
+        response['filters'] = {
+            'start_date': start_date,
+            'end_date': end_date,
+            'limit': limit
+        }
+        response['results'] = {
+            'count': len(nearby_violations),
+            'violations': nearby_violations
+        }
+        
+        return jsonify(response)
+        
+    except ValueError as e:
+        return jsonify({
+            'error': f'Invalid parameter value: {str(e)}'
+        }), 400
+    except Exception as e:
+        logging.error(f"Error in get_violations: {e}")
+        return jsonify({
+            'error': 'Internal server error',
+            'message': 'Unable to fetch violations data'
+        }), 500
+
+
 @parking_bp.route('/debug/test-nyc-api', methods=['GET'])
 def test_nyc_api():
     """
