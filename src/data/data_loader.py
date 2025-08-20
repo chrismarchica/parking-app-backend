@@ -807,17 +807,18 @@ class DataLoader:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Build query with geographic and date filters
+            # Use subquery to calculate distance and then filter
             query = """
-                SELECT *,
-                       (6371000 * acos(
-                           cos(radians(?)) * cos(radians(latitude)) * 
-                           cos(radians(longitude) - radians(?)) + 
-                           sin(radians(?)) * sin(radians(latitude))
-                       )) as distance_meters
-                FROM violations 
-                WHERE latitude IS NOT NULL 
-                  AND longitude IS NOT NULL
+                SELECT * FROM (
+                    SELECT *,
+                           (6371000 * acos(
+                               cos(radians(?)) * cos(radians(latitude)) * 
+                               cos(radians(longitude) - radians(?)) + 
+                               sin(radians(?)) * sin(radians(latitude))
+                           )) as distance_meters
+                    FROM violations 
+                    WHERE latitude IS NOT NULL 
+                      AND longitude IS NOT NULL
             """
             params = [lat, lon, lat]
             
@@ -830,9 +831,9 @@ class DataLoader:
                 query += " AND date(issue_date) <= date(?)"
                 params.append(end_date)
             
-            # Add distance filter and ordering
+            # Close subquery and add distance filter and ordering
             query += """
-                HAVING distance_meters <= ?
+                ) WHERE distance_meters <= ?
                 ORDER BY distance_meters ASC
                 LIMIT ?
             """
