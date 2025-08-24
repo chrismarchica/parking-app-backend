@@ -25,4 +25,7 @@ class Config:
     # Geocoding settings
     GEOCODING_API_URL = "https://geosearch.planninglabs.nyc/v2/search"  # NYC Planning Labs Geosearch v2
     MAX_VIOLATIONS_TO_LOAD = 10000  # Limit for performance
-    GEOCODING_BATCH_SIZE = 100  # Process in batches to avoid rate limits 
+    GEOCODING_BATCH_SIZE = 100  # Process in batches to avoid rate limits
+    
+    # Date filtering for recent violations only
+    RECENT_VIOLATIONS_MONTHS = 6  # Only load violations from last N months 

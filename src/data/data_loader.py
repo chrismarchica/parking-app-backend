@@ -403,15 +403,30 @@ class DataLoader:
             }
     
     def load_real_violations(self, limit: int = None) -> bool:
-        """Load real violation data from NYC Open Data with geocoding."""
+        """Load real violation data from NYC Open Data with geocoding (recent violations only)."""
         try:
             if limit is None:
                 limit = Config.MAX_VIOLATIONS_TO_LOAD
             
-            logging.info(f"Fetching real violations data from NYC Open Data (limit: {limit})...")
+            # Calculate date cutoff for recent violations only
+            from datetime import datetime, timedelta
+            cutoff_date = datetime.now() - timedelta(days=Config.RECENT_VIOLATIONS_MONTHS * 30)
+            cutoff_str = cutoff_date.strftime('%Y-%m-%d')
             
-            # Fetch violations data
-            url = f"{Config.VIOLATIONS_URL}?$limit={limit}"
+            # Also add realistic date bounds to exclude data quality issues (future dates)
+            current_date = datetime.now()
+            max_date_str = current_date.strftime('%Y-%m-%d')  # No future dates allowed
+            min_date_str = "2020-01-01"  # Don't go too far back
+            
+            logging.info(f"Fetching recent violations data from NYC Open Data (limit: {limit}, date range: {cutoff_str} to {max_date_str})...")
+            
+            # Fetch violations data with date filter for recent violations only AND realistic date bounds
+            date_filter = f"issue_date >= '{cutoff_str}T00:00:00.000' AND issue_date <= '{max_date_str}T23:59:59.999' AND issue_date >= '{min_date_str}T00:00:00.000'"
+            url = f"{Config.VIOLATIONS_URL}?$where={date_filter}&$limit={limit}&$order=issue_date DESC"
+            
+            logging.info(f"Date filter applied: {min_date_str} <= issue_date <= {max_date_str} AND issue_date >= {cutoff_str}")
+            logging.info(f"API URL: {url}")
+            
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Accept': 'application/json',
@@ -421,11 +436,19 @@ class DataLoader:
             response.raise_for_status()
             
             violations_data = response.json()
-            logging.info(f"Received {len(violations_data)} violation records")
+            logging.info(f"Received {len(violations_data)} violation records (filtered for recent violations since {cutoff_str})")
             
             if not violations_data:
-                logging.warning("No violations data received")
+                logging.warning(f"No recent violations found since {cutoff_str}. Try increasing RECENT_VIOLATIONS_MONTHS in config.")
                 return False
+            
+            # Log date range of received violations
+            if violations_data:
+                dates = [item.get('issue_date', '')[:10] for item in violations_data if item.get('issue_date')]
+                if dates:
+                    logging.info(f"Violation date range: {min(dates)} to {max(dates)}")
+                else:
+                    logging.warning("No valid issue_date found in violations data")
             
             # Process violations in batches for geocoding
             conn = sqlite3.connect(self.db_path)

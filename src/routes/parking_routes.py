@@ -265,11 +265,22 @@ def load_real_violations():
         actual_count = cursor.fetchone()[0]
         conn.close()
         
+        # Calculate date range info  
+        from datetime import datetime, timedelta
+        from src.config import Config
+        cutoff_date = datetime.now() - timedelta(days=Config.RECENT_VIOLATIONS_MONTHS * 30)
+        cutoff_str = cutoff_date.strftime('%Y-%m-%d')
+        
         return jsonify({
             'message': f'Successfully loaded real violation data',
             'requested_limit': limit,
             'total_violations_in_db': actual_count,
-            'data_source': 'NYC Open Data'
+            'data_source': 'NYC Open Data',
+            'date_filter': {
+                'since': cutoff_str,
+                'months_back': Config.RECENT_VIOLATIONS_MONTHS,
+                'note': 'Only recent violations are loaded to keep data current'
+            }
         })
         
     except Exception as e:
